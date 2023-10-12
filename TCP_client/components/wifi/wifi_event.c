@@ -28,6 +28,8 @@
 
 #include "board.h"
 #include "log.h"
+//tcp
+#include "tcp_client.h"
 
 #define DBG_TAG "WIFI EVENT"
 
@@ -39,7 +41,10 @@ static wifi_conf_t conf =
     .country_code = "CN",
 };
 static TaskHandle_t wifi_fw_task;
+static TaskHandle_t wifi_con_task;
 static uint32_t sta_ConnectStatus = 0;
+static char* SSID = NULL;
+static char* PASS = NULL;
 
 /**
  * @brief WiFi 任务
@@ -82,8 +87,6 @@ int wifi_start_firmware_task(void)
  *
  * @param code
 */
-
-
 void wifi_event_handler(uint32_t code)
 {
 
@@ -155,50 +158,78 @@ void wifi_event_handler(uint32_t code)
         }
     }
 }
+/**
+ * @brief 读取回调
+ *
+ * @param buff
+ * @param len
+*/
+static void tcp_read_cb(char* buff, signed int len)
+{
+    LOG_I("TCP client read %d:%s", len, buff);
+    if (memcmp(buff, "close", len)==0) {
+        LOG_F("tcp client close.....");
+        tcpClientClose();
+    }
+}
 
-uint8_t wifi_connect(char* ssid, char* passwd)
+static void wifi_connect_task(void* arg)
 {
     int ret = 255;
     // struct fhost_vif_ip_addr_cfg ip_cfg = { 0 };
     uint32_t ipv4_addr = 0;
 
-    if (NULL==ssid || 0==strlen(ssid)) {
-        return 1;
-    }
-
-    if (wifi_mgmr_sta_state_get() == 1) {
-        wifi_sta_disconnect();
-    }
-    if (wifi_sta_connect(ssid, passwd, NULL, NULL, 0, 0, 0, 1)) {
-        return 4;
-    }
-    LOG_I("Wating wifi connet");
-    //等待连接成功
-    sta_ConnectStatus = 0;
-    for (int i = 0;i<10*30;i++) {
-
-        vTaskDelay(100/portTICK_PERIOD_MS);
-        switch (sta_ConnectStatus) {
-            case CODE_WIFI_ON_MGMR_DONE:
-                return 3;
-            case CODE_WIFI_ON_SCAN_DONE:
-
-                return 2;
-            case CODE_WIFI_ON_DISCONNECT:	//连接失败（超过了重连次数还没有连接成功的状态）
-
-                return 4;
-            case CODE_WIFI_ON_CONNECTED:	//连接成功(表示wifi sta状态的时候表示同时获取IP(DHCP)成功，或者使用静态IP)
-                LOG_I("Wating wifi connet OK");
-                break;
-            case CODE_WIFI_ON_GOT_IP:
-
-                return 0;
-            default:
-                //等待连接成功
-                break;
+    while (1)
+    {
+        if (NULL==SSID || 0==strlen(SSID)) {
+            goto  __suTsk;
+        }
+        if (wifi_mgmr_sta_state_get() == 1) {
+            wifi_sta_disconnect();
+        }
+        if (wifi_sta_connect(SSID, PASS, NULL, NULL, 0, 0, 0, 1)) {
+            goto  __suTsk;
         }
 
-    }
+        //等待连接成功
+        sta_ConnectStatus = 0;
+        for (int i = 0;i<10*30;i++) {
 
-    return 14; //连接超时
+            vTaskDelay(100/portTICK_PERIOD_MS);
+            switch (sta_ConnectStatus) {
+                case CODE_WIFI_ON_MGMR_DONE:
+                    goto  __suTsk;
+                case CODE_WIFI_ON_SCAN_DONE:
+
+                    goto  __suTsk;
+                case CODE_WIFI_ON_DISCONNECT:	//连接失败（超过了重连次数还没有连接成功的状态）
+
+                    goto  __suTsk;
+                case CODE_WIFI_ON_CONNECTED:	//连接成功(表示wifi sta状态的时候表示同时获取IP(DHCP)成功，或者使用静态IP)
+                    break;
+                case CODE_WIFI_ON_GOT_IP:
+                    // tcp_client_init();
+                    tcpClientInit();
+                    tcpClientConentStart("122.114.122.174", 35810);
+                    tcpClientSend("Hello Server!");
+                    tcpClientRead(tcp_read_cb);
+                    goto  __suTsk;
+                default:
+                    //等待连接成功
+                    break;
+            }
+        }
+    __suTsk:
+        vTaskSuspend(wifi_con_task);
+    }
+}
+
+uint8_t wifi_connect(char* ssid, char* passwd)
+{
+    SSID = ssid;
+    PASS = passwd;
+    if (wifi_con_task==NULL)
+        xTaskCreate(wifi_connect_task, "wifi_con_tak", 1024, 2, NULL, &wifi_con_task);
+    else
+        vTaskResume(wifi_con_task);
 }

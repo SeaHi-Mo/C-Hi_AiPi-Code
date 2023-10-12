@@ -17,6 +17,7 @@
 #include "board.h"
 #include "log.h"
 #include "wifi_event.h"
+#include "bflb_mtimer.h"
 
 #define DBG_TAG "MAIN"
 
@@ -25,7 +26,8 @@ int main(void)
 {
     board_init();
     tcpip_init(NULL, NULL);
-    wifi_start_firmware_task(); 
-    
+    wifi_start_firmware_task();
+    wifi_connect("AIOT@FAE", "fae12345678");
+
     vTaskStartScheduler();
 }
